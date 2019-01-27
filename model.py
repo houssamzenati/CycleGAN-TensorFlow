@@ -103,7 +103,7 @@ class CycleGAN:
     return G_loss, D_Y_loss, F_loss, D_X_loss, fake_y, fake_x
 
   def optimize(self, G_loss, D_Y_loss, F_loss, D_X_loss, consensus=True):
-    def make_optimizer(loss, variables, name='Adam', consensus_pack):
+    def make_optimizer(loss, variables, consensus_pack, name='Adam'):
       """ Adam optimizer with learning rate 0.0002 for the first 100k steps (~100 epochs)
           and a linearly decaying rate that goes to zero over the next 100k steps
       """
@@ -152,10 +152,10 @@ class CycleGAN:
     # Regularizer
     reg = 0.5 * sum(tf.reduce_sum(tf.square(g)) for g in grads)
 
-    G_optimizer = make_optimizer(G_loss, self.G.variables, name='Adam_G', (consensus, reg, g_grads))
-    D_Y_optimizer = make_optimizer(D_Y_loss, self.D_Y.variables, name='Adam_D_Y', (consensus, reg, dy_grads))
-    F_optimizer =  make_optimizer(F_loss, self.F.variables, name='Adam_F', (consensus, reg, f_grads))
-    D_X_optimizer = make_optimizer(D_X_loss, self.D_X.variables, name='Adam_D_X', (consensus, reg, dx_grads))
+    G_optimizer = make_optimizer(G_loss, self.G.variables, (consensus, reg, g_grads), name='Adam_G')
+    D_Y_optimizer = make_optimizer(D_Y_loss, self.D_Y.variables, (consensus, reg, dy_grads), name='Adam_D_Y')
+    F_optimizer =  make_optimizer(F_loss, self.F.variables, (consensus, reg, f_grads), name='Adam_F')
+    D_X_optimizer = make_optimizer(D_X_loss, self.D_X.variables, (consensus, reg, dx_grads), name='Adam_D_X')
 
     with tf.control_dependencies([G_optimizer, D_Y_optimizer, F_optimizer, D_X_optimizer]):
       return tf.no_op(name='optimizers')
