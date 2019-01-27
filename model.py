@@ -102,11 +102,12 @@ class CycleGAN:
 
     return G_loss, D_Y_loss, F_loss, D_X_loss, fake_y, fake_x
 
-  def optimize(self, G_loss, D_Y_loss, F_loss, D_X_loss):
-    def make_optimizer(loss, variables, name='Adam'):
+  def optimize(self, G_loss, D_Y_loss, F_loss, D_X_loss, consensus=True):
+    def make_optimizer(loss, variables, name='Adam', consensus_pack):
       """ Adam optimizer with learning rate 0.0002 for the first 100k steps (~100 epochs)
           and a linearly decaying rate that goes to zero over the next 100k steps
       """
+      consensus, reg, grads = consensus_pack
       global_step = tf.Variable(0, trainable=False)
       starter_learning_rate = self.learning_rate
       end_learning_rate = 0.0
@@ -125,16 +126,36 @@ class CycleGAN:
       )
       tf.summary.scalar('learning_rate/{}'.format(name), learning_rate)
 
-      learning_step = (
-          tf.train.AdamOptimizer(learning_rate, beta1=beta1, name=name)
-                  .minimize(loss, global_step=global_step, var_list=variables)
-      )
+      if not consensus:
+        learning_step = (
+            tf.train.AdamOptimizer(learning_rate, beta1=beta1, name=name)
+                    .minimize(loss, global_step=global_step, var_list=variables)
+        )
+      else:
+        # Jacobian times gradiant
+        Jgrads = tf.gradients(reg, variables)
+
+        apply_vec = [(g + 10 * Jg, v) for (g, Jg, v) in zip(grads, Jgrads, variables) if Jg is not None]
+
+        with tf.control_dependencies([g for (g, v) in apply_vec]):
+          learning_step = (tf.train.AdamOptimizer(learning_rate, beta1=beta1, name=name).apply_gradients(apply_vec))
+
+
       return learning_step
 
-    G_optimizer = make_optimizer(G_loss, self.G.variables, name='Adam_G')
-    D_Y_optimizer = make_optimizer(D_Y_loss, self.D_Y.variables, name='Adam_D_Y')
-    F_optimizer =  make_optimizer(F_loss, self.F.variables, name='Adam_F')
-    D_X_optimizer = make_optimizer(D_X_loss, self.D_X.variables, name='Adam_D_X')
+    dy_grads = tf.gradients(D_Y_loss, self.D_Y.variables)
+    dx_grads = tf.gradients(D_X_loss, self.D_X.variables)
+    g_grads = tf.gradients(G_loss, self.G.variables)
+    f_grads = tf.gradients(F_loss, self.F.variables)
+    grads = g_grads + dy_grads + f_grads + dx_grads
+
+    # Regularizer
+    reg = 0.5 * sum(tf.reduce_sum(tf.square(g)) for g in grads)
+
+    G_optimizer = make_optimizer(G_loss, self.G.variables, name='Adam_G', (consensus, reg, g_grads))
+    D_Y_optimizer = make_optimizer(D_Y_loss, self.D_Y.variables, name='Adam_D_Y', (consensus, reg, dy_grads))
+    F_optimizer =  make_optimizer(F_loss, self.F.variables, name='Adam_F', (consensus, reg, f_grads))
+    D_X_optimizer = make_optimizer(D_X_loss, self.D_X.variables, name='Adam_D_X', (consensus, reg, dx_grads))
 
     with tf.control_dependencies([G_optimizer, D_Y_optimizer, F_optimizer, D_X_optimizer]):
       return tf.no_op(name='optimizers')
